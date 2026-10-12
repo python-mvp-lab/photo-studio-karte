@@ -1,0 +1,11 @@
+# スタジオ名とアプリ名の設定（見本）
+#
+# このファイルを「studio_settings.toml」という名前でコピーして、中身を書き換えてください。
+# studio_settings.toml は .gitignore に入っているので、GitHubには公開されません。
+# studio_settings.toml が無いときは、下の見本の名前で動きます。
+
+# AIへの指示文や、LINEのCSVでスタジオ側の発言を見分けるときに使う名前
+studio_name = "studio SAMPLE"
+
+# 画面の上に表示するアプリ名
+app_name = "Photo Karte"

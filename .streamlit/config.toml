@@ -1,0 +1,15 @@
+[server]
+# 同じWi-Fiのほかの端末から見られないように、このPCの中だけで動かす
+address = "localhost"
+headless = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#8C6D3F"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F4F1"
+textColor = "#333333"
+font = "sans serif"

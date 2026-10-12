@@ -1,0 +1,29 @@
+# 実際のお客様データ（個人情報）は絶対に公開しない
+data/
+
+# ご家族・事業の情報が書かれた制作メモ（公開しない）
+顧客管理アプリ制作_プロンプト.md
+作業引き継ぎメモ.md
+
+# 本物のスタジオ名・アプリ名の設定（公開しない。見本は studio_settings.example.toml）
+studio_settings.toml
+
+# デモ用にコピーしたデータと、サンプルデータで試したときにできるファイル
+demo_data/
+sample_data/backups/
+sample_data/exports/
+sample_data/trash/
+
+# 環境・キャッシュ
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 秘密情報・書き出しファイル
+.streamlit/secrets.toml
+.env
+*.zip
+
+# Mac
+.DS_Store
