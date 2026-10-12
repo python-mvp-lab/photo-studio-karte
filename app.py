@@ -24,7 +24,7 @@ import unicodedata
 import zipfile
 from collections import Counter
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -102,15 +102,9 @@ PAYMENT_ORDER = ["不明", "未入金", "一部入金", "入金済み"]
 SOURCES = ["Instagram", "紹介", "Web検索", "LINE", "以前のご利用", "その他", "不明"]
 SEASONS = ["春（桜）", "夏", "秋（紅葉）", "冬"]
 
-# お子さまの年齢（満年齢）と、その年齢で迎える行事
-CHILD_EVENTS = {
-    3: "七五三（3歳）",
-    5: "七五三（5歳）",
-    6: "小学校入学（目安）",
-    7: "七五三（7歳）",
-    12: "中学校入学（目安）",
-    20: "二十歳のつどい（成人式）",
-}
+# お子さまの行事（七五三は満年齢の年の11月、入学・二十歳のつどいは学年＝4月2日〜翌年4月1日生まれで決まる）
+SHICHIGOSAN_AGES = (3, 5, 7)
+HALF_YEAR = timedelta(days=182)
 
 StatusLiteral = Literal[tuple(STATUSES)]
 ShootTypeLiteral = Literal[tuple(SHOOT_TYPES)]
@@ -1507,44 +1501,76 @@ def next_shoot_checklist(kartes: list[Karte], today: date) -> Optional[Karte]:
     return upcoming[0] if upcoming else None
 
 
-def _child_age_now(child: Child, as_of: Optional[date], today: date) -> Optional[int]:
+def _shift_years(value: date, years: int) -> date:
+    try:
+        return value.replace(year=value.year + years)
+    except ValueError:  # 2月29日
+        return value.replace(year=value.year + years, day=28)
+
+
+def age_on(birthday: date, day: date) -> int:
+    """満年齢。"""
+    return day.year - birthday.year - ((day.month, day.day) < (birthday.month, birthday.day))
+
+
+def estimate_birthday(child: Child, as_of: Optional[date]) -> tuple[Optional[date], bool]:
+    """(誕生日, 正確かどうか)。年齢しか分からないときは、その年齢の真ん中（半年前）の日と見なす。"""
     birthday = parse_iso_date(child.birthday)
     if birthday:
-        return today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+        return birthday, True
     if child.age is not None and as_of is not None:
-        return child.age + (today.year - as_of.year)
-    return None
+        return _shift_years(as_of, -child.age) - HALF_YEAR, False
+    return None, False
+
+
+def school_entry_year(birthday: date) -> int:
+    """小学校に入学する年（4月2日〜翌年4月1日生まれが同じ学年）。"""
+    return birthday.year + (7 if (birthday.month, birthday.day) >= (4, 2) else 6)
+
+
+def child_event_dates(birthday: date) -> list[tuple[str, date]]:
+    """お子さまが迎える行事と、そのおおよその日付。"""
+    entry = school_entry_year(birthday)
+    events = [(f"七五三（{n}歳）", date(birthday.year + n, 11, 15)) for n in SHICHIGOSAN_AGES]
+    events += [
+        ("小学校入学", date(entry, 4, 1)),
+        ("中学校入学", date(entry + 6, 4, 1)),
+        ("二十歳のつどい（成人式）", date(entry + 14, 1, 10)),
+    ]
+    return sorted(events, key=lambda event: event[1])
 
 
 def upcoming_child_events(kartes: list[Karte], today: date) -> list[dict[str, str]]:
-    """お子さまの年齢から、今年・来年に行事を迎えるお客様を探す（目安）。"""
+    """今日から来年末までに行事を迎えるお子さまを探す（目安）。"""
     latest: dict[tuple[str, str], tuple[Karte, Child]] = {}
     for karte in sorted(kartes, key=lambda k: k.record.registered_at):
         for index, child in enumerate(karte.record.future.children):
             key = (karte.record.customer_id, normalize_name(child.name) or f"#{index}")
             latest[key] = (karte, child)
 
-    rows = []
+    limit = date(today.year + 1, 12, 31)
+    found: list[tuple[date, str, dict[str, str]]] = []
     for karte, child in latest.values():
-        registered = karte.record.registered_dt()
-        age = _child_age_now(child, registered.date() if registered else None, today)
-        if age is None:
-            continue
         record = karte.record
-        for when, event_age in (("今年", age), ("来年", age + 1)):
-            if event_age in CHILD_EVENTS:
-                rows.append(
-                    {
-                        "時期": when,
-                        "行事": CHILD_EVENTS[event_age],
-                        "お客様": f"{record.display_name} 様",
-                        "お子さま": child.name or "お子さま",
-                        "今の年齢（目安）": f"{age}歳",
-                        "前回のご依頼": f"{record.shoot.type or '種類未設定'}（{record.shoot.date or '撮影日未定'}）",
-                        "カルテID": record.request_id,
-                    }
-                )
-    return sorted(rows, key=lambda r: (r["時期"] != "今年", r["お客様"]))
+        registered = record.registered_dt()
+        birthday, exact = estimate_birthday(child, registered.date() if registered else None)
+        if birthday is None:
+            continue
+        for event, when in child_event_dates(birthday):
+            if not today <= when <= limit:
+                continue
+            row = {
+                "時期": f"{when.year}年{when.month}月ごろ",
+                "行事": event,
+                "お客様": f"{record.display_name} 様",
+                "お子さま": child.name or "お子さま",
+                "今の年齢（目安）": f"{age_on(birthday, today)}歳",
+                "計算のもと": "誕生日" if exact else "年齢から推定",
+                "前回のご依頼": f"{record.shoot.type or '種類未設定'}（{record.shoot.date or '撮影日未定'}）",
+                "カルテID": record.request_id,
+            }
+            found.append((when, row["お客様"], row))
+    return [row for *_, row in sorted(found, key=lambda item: (item[0], item[1]))]
 
 
 def karte_table_rows(kartes: list[Karte], counts: Counter) -> list[dict[str, str]]:
@@ -1598,6 +1624,7 @@ LINE公式アカウントでのお客様とスタジオのやり取り（時系�
 - requests: 撮影へのご要望（撮りたいカット、背景、小物、同行者、候補日など）。
 - ng: 避けたいこと、苦手なこと、配慮が必要なこと。
 - prep_checklist: 撮影当日までに準備・確認すべきことを、1項目1文のチェックリストで書く。ご要望の撮り忘れ防止を最優先にする。
+- payment_status: 入金済み・一部入金の連絡があれば、その状態にする。支払い方法や支払い時期の案内だけで、入金の連絡がなければ「未入金」。料金や支払いの話が一切なければ「不明」。
 - source: どこでスタジオを知ったか。source_detail にはその具体的な内容。
 - children: お子さまの呼び名と年齢（分かる範囲）。誕生日が分かれば birthday に YYYY-MM-DD。
 - anniversaries: 誕生日・結婚記念日など、今後のご案内に使える記念日。
@@ -2613,7 +2640,10 @@ def _render_preset(preset: str, kartes: list[Karte], counts: Counter, today: dat
             st.info("該当するお客様はいません。")
     elif preset == "child_events":
         rows = upcoming_child_events(kartes, today)
-        st.caption("お子さまの年齢から計算した目安です。")
+        st.caption(
+            "今日から来年末までの行事です。お子さまの誕生日（分からなければ年齢）から計算した目安です。"
+            "入学と二十歳のつどいは学年（4月2日〜翌年4月1日生まれ）で計算しています。"
+        )
         if rows:
             df = pd.DataFrame(rows)
             event = st.dataframe(df, hide_index=True, width="stretch", on_select="rerun",

@@ -40,7 +40,7 @@ LINE公式アカウントでのお客様とのやり取りを取り込み、AI�
 - Python 3.13 / Streamlit 1.65
 - OpenAI API（既定のモデルは `gpt-6.1-sol`。サイドバーで切り替えできます）
 - pydantic（データモデル・AI出力のスキーマ）、PyYAML、pandas
-- pytest（ロジック層のテスト67件）＋ Streamlit AppTest（画面の自動確認）
+- pytest（ロジック層のテスト72件）＋ Streamlit AppTest（画面の自動確認）
 
 ## 設計のポイント
 

@@ -594,7 +594,37 @@ def test_t24_schedule_aggregations(schedule_kartes):
     assert app.next_shoot_checklist([], TODAY) is None
 
 
-def test_t25_upcoming_child_events():
+@pytest.mark.parametrize(
+    ("birthday", "entry_year"),
+    [
+        (date(2020, 4, 1), 2026),  # 4月1日生まれは早生まれ（前の学年）
+        (date(2020, 4, 2), 2027),
+        (date(2020, 10, 1), 2027),
+        (date(2021, 3, 31), 2027),
+    ],
+)
+def test_t25_school_entry_year(birthday, entry_year):
+    assert app.school_entry_year(birthday) == entry_year
+
+
+def test_t25b_child_event_dates_and_estimate():
+    events = dict(app.child_event_dates(date(2007, 1, 1)))
+    assert events["七五三（7歳）"] == date(2014, 11, 15)
+    assert events["小学校入学"] == date(2013, 4, 1)
+    assert events["中学校入学"] == date(2019, 4, 1)
+    assert events["二十歳のつどい（成人式）"] == date(2027, 1, 10)
+    # 同じ学年（2006年4月2日〜2007年4月1日生まれ）は、二十歳のつどいも同じ年
+    assert dict(app.child_event_dates(date(2006, 5, 1)))["二十歳のつどい（成人式）"] == date(2027, 1, 10)
+
+    assert app.estimate_birthday(app.Child(birthday="2021-03-01"), None) == (date(2021, 3, 1), True)
+    # 6歳（2026-10-10時点）なら、誕生日は 2019-10-11〜2020-10-10 の間。真ん中の 2020-04-11 と見なす
+    assert app.estimate_birthday(app.Child(age=6), date(2026, 10, 10)) == (date(2020, 4, 11), False)
+    assert app.estimate_birthday(app.Child(age=6), None) == (None, False)
+    assert app.estimate_birthday(app.Child(), date(2026, 10, 10)) == (None, False)
+    assert app.age_on(date(2020, 2, 29), date(2026, 2, 28)) == 5
+
+
+def test_t25c_upcoming_child_events():
     kartes = [
         make_karte(
             rid="old", cid="C0001", name="山田 花子", registered="2024-05-01 10:00",
@@ -602,22 +632,34 @@ def test_t25_upcoming_child_events():
         ),
         make_karte(
             rid="new", cid="C0001", name="山田 花子", registered="2025-05-01 10:00",
-            children=[app.Child(name="さくらちゃん", age=4)],
+            children=[app.Child(name="さくらちゃん", age=4, birthday="2021-03-01")],
         ),
         make_karte(
-            rid="seijin", cid="C0002", name="佐藤 美咲", registered="2026-01-01 10:00",
-            children=[app.Child(name="ゆうと", birthday="2007-01-01"), app.Child(name="年齢不明")],
+            rid="ito", cid="C0002", name="伊藤 まい", registered="2026-10-10 10:00",
+            children=[app.Child(name=None, age=6)],
+        ),
+        make_karte(
+            rid="seijin", cid="C0003", name="佐藤 美咲", registered="2026-01-01 10:00",
+            children=[
+                app.Child(name="ゆうと", birthday="2007-01-01"),
+                app.Child(name="はると", birthday="2007-04-05"),  # 1つ下の学年 → 2028年（範囲外）
+                app.Child(name="年齢不明"),
+            ],
         ),
     ]
     rows = app.upcoming_child_events(kartes, TODAY)
-    summary = [(r["時期"], r["行事"], r["お子さま"], r["カルテID"]) for r in rows]
-    # 「今年」が先。同じ時期の中はお客様名の順（佐藤 → 山田）
+    summary = [(r["時期"], r["行事"], r["お子さま"], r["カルテID"], r["計算のもと"]) for r in rows]
+    # 今日（2026-10-11）から来年末まで。日付の順、同じ日付はお客様名の順（伊藤 → 山田）
     assert summary == [
-        ("今年", "七五三（5歳）", "さくらちゃん", "new"),
-        ("来年", "二十歳のつどい（成人式）", "ゆうと", "seijin"),
-        ("来年", "小学校入学（目安）", "さくらちゃん", "new"),
+        ("2026年11月ごろ", "七五三（5歳）", "さくらちゃん", "new", "誕生日"),
+        ("2027年1月ごろ", "二十歳のつどい（成人式）", "ゆうと", "seijin", "誕生日"),
+        ("2027年4月ごろ", "小学校入学", "お子さま", "ito", "年齢から推定"),
+        ("2027年4月ごろ", "小学校入学", "さくらちゃん", "new", "誕生日"),
+        ("2027年11月ごろ", "七五三（7歳）", "お子さま", "ito", "年齢から推定"),
     ]
     assert rows[0]["今の年齢（目安）"] == "5歳"
+    assert rows[1]["今の年齢（目安）"] == "19歳"
+    assert rows[2]["今の年齢（目安）"] == "6歳"
 
 
 def test_t26_filter_records():
@@ -807,6 +849,8 @@ def test_t31_studio_settings(tmp_path):
     assert app.STUDIO_NAME == app.DEFAULT_STUDIO_NAME == "studio SAMPLE"
     assert app.APP_NAME == app.DEFAULT_APP_NAME == "Photo Karte"
     assert "「studio SAMPLE」" in app.EXTRACTION_SYSTEM_PROMPT
+    # 支払い方法の案内だけなら「未入金」にするルール（本物のAIで「不明」になったため追加）
+    assert "入金の連絡がなければ「未入金」" in app.EXTRACTION_SYSTEM_PROMPT
 
     settings_file = tmp_path / "studio_settings.toml"
     settings_file.write_text('studio_name = "studio TEST"\napp_name = "TEST Karte"\n', encoding="utf-8")
